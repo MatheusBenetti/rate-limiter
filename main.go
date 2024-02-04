@@ -3,140 +3,89 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
-	"os"
-	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
-	"github.com/jackc/pgx/v4/pgxpool"
+	"github.com/go-redis/redis/v8"
+	"github.com/gorilla/mux"
+	"golang.org/x/time/rate"
 )
 
 type RateLimiter struct {
-	dbPool      *pgxpool.Pool
-	maxRequests int
-	timeWindow  time.Duration
+	limiterMapIP     map[string]*rate.Limiter
+	limiterMapToken  map[string]*rate.Limiter
+	redisClient      *redis.Client
+	blockDuration    time.Duration
+	rateLimitPerPage int
 }
 
-type ErrorResponse struct {
-	Message string `json:"message"`
-}
-
-func NewRateLimiter(dbPool *pgxpool.Pool, maxRequests int, timeWindow time.Duration) (*RateLimiter, error) {
-	if maxRequests <= 0 {
-		return nil, fmt.Errorf("max requests must be greater than zero")
-	}
-	if timeWindow <= 0 {
-		return nil, fmt.Errorf("time window must be greater than zero")
-	}
-
+func NewRateLimiter() *RateLimiter {
 	return &RateLimiter{
-		dbPool:      dbPool,
-		maxRequests: maxRequests,
-		timeWindow:  timeWindow,
-	}, nil
-}
-
-func (rl *RateLimiter) Limit(c *gin.Context) {
-	ip := c.ClientIP()
-	token := c.GetHeader("API_KEY")
-
-	var err error
-	if token != "" {
-		err = rl.limitByToken(token)
-	} else {
-		err = rl.limitByIP(ip)
-	}
-
-	if err != nil {
-		c.JSON(http.StatusTooManyRequests, ErrorResponse{Message: err.Error()})
-		c.Abort()
-		return
+		limiterMapIP:     make(map[string]*rate.Limiter),
+		limiterMapToken:  make(map[string]*rate.Limiter),
+		redisClient:      getRedisClient(),
+		blockDuration:    5 * time.Minute, // Tempo de bloqueio em caso de exceder as requisições
+		rateLimitPerPage: 5,               // Número máximo de requisições permitidas por segundo
 	}
 }
 
-func (rl *RateLimiter) limitByIP(ip string) error {
-	var requests int
-	err := rl.dbPool.QueryRow(context.Background(), "SELECT COUNT(*) FROM requests WHERE ip = $1 AND created_at > NOW() - INTERVAL '1 minute'", ip).Scan(&requests)
-
-	if err != nil {
-		return fmt.Errorf("error counting IP requests: %w", err)
+func (rl *RateLimiter) getLimiterIP(ip string) *rate.Limiter {
+	rl.redisClient.Set(context.Background(), "ip:"+ip, 0, rl.blockDuration)
+	limiter, exists := rl.limiterMapIP[ip]
+	if !exists {
+		limiter = rate.NewLimiter(rate.Limit(rl.rateLimitPerPage), rl.rateLimitPerPage)
+		rl.limiterMapIP[ip] = limiter
 	}
-
-	if requests > rl.maxRequests {
-		return rl.blockIP(ip)
-	}
-
-	return nil
+	return limiter
 }
 
-func (rl *RateLimiter) limitByToken(token string) error {
-	var requests int
-	err := rl.dbPool.QueryRow(context.Background(), "SELECT COUNT(*) FROM requests WHERE token = $1 AND created_at > NOW() - INTERVAL '1 minute'", token).Scan(&requests)
-
-	if err != nil {
-		return fmt.Errorf("error counting token requests: %w", err)
+func (rl *RateLimiter) getLimiterToken(token string) *rate.Limiter {
+	rl.redisClient.Set(context.Background(), "token:"+token, 0, rl.blockDuration)
+	limiter, exists := rl.limiterMapToken[token]
+	if !exists {
+		limiter = rate.NewLimiter(rate.Limit(rl.rateLimitPerPage), rl.rateLimitPerPage)
+		rl.limiterMapToken[token] = limiter
 	}
-
-	if requests > rl.maxRequests {
-		return rl.blockToken(token)
-	}
-
-	return nil
+	return limiter
 }
 
-func (rl *RateLimiter) blockIP(ip string) error {
-	_, err := rl.dbPool.Exec(context.Background(), "INSERT INTO blocked_ips (ip) VALUES ($1)", ip)
+func (rl *RateLimiter) middleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := r.RemoteAddr
+		token := r.Header.Get("API_KEY")
 
-	if err != nil {
-		return fmt.Errorf("error blocking IP: %w", err)
-	}
+		limiterIP := rl.getLimiterIP(ip)
+		limiterToken := rl.getLimiterToken(token)
 
-	return fmt.Errorf("too many requests from IP address %s", ip)
-}
+		if !limiterIP.Allow() && !limiterToken.Allow() {
+			http.Error(w, "You have reached the maximum number of requests or actions allowed within a certain time frame", http.StatusTooManyRequests)
+			return
+		}
 
-func (rl *RateLimiter) blockToken(token string) error {
-	_, err := rl.dbPool.Exec(context.Background(), "INSERT INTO blocked_tokens (token) VALUES ($1)", token)
-
-	if err != nil {
-		return fmt.Errorf("error blocking token: %w", err)
-	}
-
-	return fmt.Errorf("too many requests from token %s", token)
+		next.ServeHTTP(w, r)
+	})
 }
 
 func main() {
-	dbPool, err := pgxpool.Connect(context.Background(), os.Getenv("DATABASE_URL"))
+	rl := NewRateLimiter()
 
-	if err != nil {
-		fmt.Println("Error connecting to database:", err)
-		return
-	}
+	router := mux.NewRouter()
+	router.Use(rl.middleware)
 
-	maxRequests, _ := strconv.Atoi(os.Getenv("MAX_REQUESTS"))
-	timeWindow, _ := time.ParseDuration(os.Getenv("TIME_WINDOW"))
-
-	rl, err := NewRateLimiter(dbPool, maxRequests, timeWindow)
-	if err != nil {
-		fmt.Println("Error creating rate limiter:", err)
-		return
-	}
-
-	validate := validator.New()
-	if err := validate.Struct(rl); err != nil {
-		fmt.Println("Error validating rate limiter:", err)
-		return
-	}
-
-	router := gin.Default()
-	router.Use(rl.Limit)
-
-	router.GET("/", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "Hello, World!",
-		})
+	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "Hello, World!")
 	})
 
-	router.Run(":8080")
+	http.Handle("/", router)
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func getRedisClient() *redis.Client {
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     "localhost:6379",
+		Password: "", // no password
+		DB:       0,  // use default DB
+	})
+	return rdb
 }
