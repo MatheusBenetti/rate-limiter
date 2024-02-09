@@ -5,88 +5,112 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
-	"github.com/go-redis/redis/v8"
-	"github.com/gorilla/mux"
-	"golang.org/x/time/rate"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httprate"
+	"gopkg.in/redis.v5"
 )
 
-type RateLimiter struct {
-	limiterMapIP     map[string]*rate.Limiter
-	limiterMapToken  map[string]*rate.Limiter
-	redisClient      *redis.Client
-	blockDuration    time.Duration
-	rateLimitPerPage int
-}
-
-func NewRateLimiter() *RateLimiter {
-	return &RateLimiter{
-		limiterMapIP:     make(map[string]*rate.Limiter),
-		limiterMapToken:  make(map[string]*rate.Limiter),
-		redisClient:      getRedisClient(),
-		blockDuration:    5 * time.Minute, // Tempo de bloqueio em caso de exceder as requisições
-		rateLimitPerPage: 5,               // Número máximo de requisições permitidas por segundo
-	}
-}
-
-func (rl *RateLimiter) getLimiterIP(ip string) *rate.Limiter {
-	rl.redisClient.Set(context.Background(), "ip:"+ip, 0, rl.blockDuration)
-	limiter, exists := rl.limiterMapIP[ip]
-	if !exists {
-		limiter = rate.NewLimiter(rate.Limit(rl.rateLimitPerPage), rl.rateLimitPerPage)
-		rl.limiterMapIP[ip] = limiter
-	}
-	return limiter
-}
-
-func (rl *RateLimiter) getLimiterToken(token string) *rate.Limiter {
-	rl.redisClient.Set(context.Background(), "token:"+token, 0, rl.blockDuration)
-	limiter, exists := rl.limiterMapToken[token]
-	if !exists {
-		limiter = rate.NewLimiter(rate.Limit(rl.rateLimitPerPage), rl.rateLimitPerPage)
-		rl.limiterMapToken[token] = limiter
-	}
-	return limiter
-}
-
-func (rl *RateLimiter) middleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		token := r.Header.Get("API_KEY")
-
-		limiterIP := rl.getLimiterIP(ip)
-		limiterToken := rl.getLimiterToken(token)
-
-		if !limiterIP.Allow() && !limiterToken.Allow() {
-			http.Error(w, "You have reached the maximum number of requests or actions allowed within a certain time frame", http.StatusTooManyRequests)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
-}
-
 func main() {
-	rl := NewRateLimiter()
+	r := chi.NewRouter()
 
-	router := mux.NewRouter()
-	router.Use(rl.middleware)
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(rateLimiter(10, time.Minute))
 
-	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "Hello, World!")
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("Welcome to the server!\n"))
 	})
 
-	http.Handle("/", router)
-	log.Println("Server started on port 8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	r.Get("/limited-ip", func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("Limited by IP\n"))
+	})
+
+	r.Get("/limited-token", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("API_KEY", "my-token")
+		w.Write([]byte("Limited by Token\n"))
+	})
+
+	log.Fatal(http.ListenAndServe(":8080", r))
 }
 
-func getRedisClient() *redis.Client {
-	rdb := redis.NewClient(&redis.Options{
+func rateLimiter(maxRequests int, duration time.Duration) func(next http.Handler) http.Handler {
+	client := redis.NewClient(&redis.Options{
 		Addr:     "localhost:6379",
-		Password: "", // no password
-		DB:       0,  // use default DB
+		Password: "",
+		DB:       0,
 	})
-	return rdb
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := httprate.LimitByRealIP(r)
+			token := r.Header.Get("API_KEY")
+
+			key := fmt.Sprintf("rate-limiter:%s", ip)
+			if token != "" {
+				key = fmt.Sprintf("rate-limiter:%s:%s", token, ip)
+			}
+
+			ctx := context.Background()
+			ctx = context.WithValue(ctx, "key", key)
+
+			limiter := time.NewTicker(duration)
+			defer limiter.Stop()
+
+			var remaining int
+			var lastAccess time.Time
+
+			for {
+				select {
+				case <-limiter.C:
+					remaining, _ = getRemaining(client, key)
+					if remaining >= maxRequests {
+						http.Error(w, "Too many requests", http.StatusTooManyRequests)
+						return
+					}
+
+					lastAccess = time.Now()
+					setRemaining(client, key, maxRequests-remaining)
+					break
+				case <-ctx.Done():
+					return
+				}
+
+				if remaining == 0 || time.Since(lastAccess) > duration {
+					break
+				}
+			}
+
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }
+
+func getRemaining(client *redis.Client, key string) (int, error) {
+	val, err := client.Get(key).Result()
+	if err != nil && err != redis.Nil {
+		return 0, err
+	}
+
+	if val == "" {
+		return maxRequests, nil
+	}
+
+	remaining, err := strconv.Atoi(val)
+	if err != nil {
+		return 0, err
+	}
+
+	return remaining, nil
+}
+
+func setRemaining(client *redis.Client, key string, remaining int) error {
+	return client.Set(key, remaining, 0).Err()
+}
+
+const maxRequests = 10

@@ -3,14 +3,13 @@ module github.com/MatheusBenetti/rate-limiter
 go 1.21
 
 require (
-	github.com/go-redis/redis/v8 v8.11.5
-	github.com/gorilla/mux v1.8.1
-	golang.org/x/time v0.5.0
+	github.com/go-chi/chi/v5 v5.0.11
+	github.com/go-chi/httprate v0.8.0
+	gopkg.in/redis.v5 v5.2.9
 )
 
 require (
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
-	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
-	golang.org/x/net v0.10.0 // indirect
-	golang.org/x/sys v0.8.0 // indirect
+	github.com/onsi/ginkgo v1.16.5 // indirect
+	github.com/onsi/gomega v1.31.1 // indirect
 )
