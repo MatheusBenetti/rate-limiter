@@ -15,6 +15,8 @@ func main() {
 	redisClient := connectToRedis()
 	defer redisClient.Close()
 
+	os.Setenv("IP_LIMIT", "5")
+
 	ipLimitStr := os.Getenv("IP_LIMIT")
 	ipLimit, err := strconv.Atoi(ipLimitStr)
 	if err != nil {
@@ -22,12 +24,16 @@ func main() {
 		return
 	}
 
+	os.Setenv("TOKEN_LIMIT", "10")
+
 	tokenLimitStr := os.Getenv("TOKEN_LIMIT")
 	tokenLimit, err := strconv.Atoi(tokenLimitStr)
 	if err != nil {
 		fmt.Println("Erro ao ler TOKEN_LIMIT:", err)
 		return
 	}
+
+	os.Setenv("DURATION", "1s")
 
 	durationStr := os.Getenv("DURATION")
 	duration, err := time.ParseDuration(durationStr)
@@ -58,9 +64,9 @@ var ctx = context.Background()
 
 func connectToRedis() *redis.Client {
 	rdb := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379", // Endereço do servidor Redis
-		Password: "",               // Senha (se necessário)
-		DB:       0,                // Número do banco de dados
+		Addr:     "redis:6379", // Endereço do servidor Redis
+		Password: "",           // Senha (se necessário)
+		DB:       0,            // Número do banco de dados
 	})
 
 	// Testa a conexão com o Redis
