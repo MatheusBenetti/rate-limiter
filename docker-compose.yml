@@ -2,17 +2,15 @@ version: '3'
 
 services:
   web:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     ports:
       - "8080:8080"
     volumes:
-      - .docker/go:/var/lib/rate-limiter
+      - .:/app
 
   redis:  
     image: redis
     volumes:
-      - ./redis.conf:/usr/local/etc/redis/redis.conf
+      - .:/redis
     ports:
       - "6379:6379"
