@@ -68,6 +68,12 @@ func (rl *RateLimiter) middleware(next http.Handler) http.Handler {
 }
 
 func getRateLimit(category string) float64 {
+	if category == "IP" {
+		os.Setenv(category+"_RATE_LIMIT", "10")
+	} else if category == "Token" {
+		os.Setenv(category+"_RATE_LIMIT", "20")
+	}
+
 	limit, err := strconv.ParseFloat(os.Getenv(category+"_RATE_LIMIT"), 64)
 	if err != nil {
 		panic(fmt.Sprintf("Error parsing rate limit for %s: %v", category, err))
