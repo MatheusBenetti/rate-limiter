@@ -3,7 +3,7 @@ SHELL := /bin/bash
 
 .PHONY: prepare
 prepare:
-	cp env.json.example env.json
+	cp env.test.json env.json
 
 .PHONY: init
 init:
