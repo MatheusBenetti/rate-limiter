@@ -12,7 +12,7 @@ func HelloWorld(w http.ResponseWriter, _ *http.Request) {
 	output := struct {
 		Message string `json:"message"`
 	}{
-		Message: "Hello world!",
+		Message: "Rate Limiter by IP!",
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -35,7 +35,7 @@ func HelloWorldWithAPIKey(w http.ResponseWriter, r *http.Request) {
 		Message string `json:"message"`
 		APIKey  string `json:"api_key"`
 	}{
-		Message: "Hello world with API key!",
+		Message: "Rate Limiter by API key!",
 		APIKey:  apiKey,
 	}
 
