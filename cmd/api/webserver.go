@@ -19,9 +19,9 @@ func CreateWebServer(cfg *config.Config, redisCli *redis.Client) *webserver.WebS
 	}
 	apikeyHandler := internalHandler.NewAPIKeyHandler(database.NewAPIKeyRedis(redisCli))
 
-	newWebServer.AddHandler(http.MethodPost, "/api-key", apikeyHandler.CreateAPIKey)
-	newWebServer.AddHandler(http.MethodGet, "/hello-world", internalHandler.HelloWorld)
-	newWebServer.AddHandler(http.MethodGet, "/hello-world-key", internalHandler.HelloWorldWithAPIKey)
+	newWebServer.AddHandler(http.MethodPost, "/generate-api-key", apikeyHandler.CreateAPIKey)
+	newWebServer.AddHandler(http.MethodGet, "/req-by-ip", internalHandler.HelloWorld)
+	newWebServer.AddHandler(http.MethodGet, "/req-by-key", internalHandler.HelloWorldWithAPIKey)
 
 	return newWebServer
 }
