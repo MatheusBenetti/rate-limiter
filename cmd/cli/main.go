@@ -14,11 +14,11 @@ import (
 
 func main() {
 	var (
-		url         = flag.String("url", "", "URL to test")
-		maxRequests = flag.Int("r", 100, "Maximum amount of requests to send")
-		timeWindow  = flag.Int("t", 1, "Time in seconds of each request")
-		method      = flag.String("m", "GET", "HTTP method to use")
-		apiKey      = flag.String("k", "", "API Key for the request")
+		url        = flag.String("url", "", "URL to test")
+		maxReq     = flag.Int("req", 100, "Maximum amount of requests to send")
+		timeWindow = flag.Int("time", 1, "Time in seconds of each request")
+		method     = flag.String("method", "GET", "HTTP method to use")
+		apiKey     = flag.String("key", "", "API Key for the request")
 	)
 	flag.Parse()
 
@@ -27,7 +27,7 @@ func main() {
 		return
 	}
 
-	performRequestsAtRate(*url, *method, *apiKey, (*maxRequests)/(*timeWindow))
+	performRequestsAtRate(*url, *method, *apiKey, (*maxReq)/(*timeWindow))
 }
 
 func performRequestsAtRate(url, method, apiKey string, ratePerSecond int) {
