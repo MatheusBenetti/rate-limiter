@@ -20,9 +20,9 @@ go test ./...
 ```
 Ou então para testar por IP:
 ```
-docker compose run --rm go-cli-test -url http://go-app:8080/hello-world -method GET -time 1 -req 10
+docker compose run --rm go-cli-test -url http://go-app:8080/req-by-ip -method GET -time 1 -req 10
 ```
-Ou por API KEY fazer a request na url http://localhost:8080/api-key via Postman:
+Ou por API KEY fazer a request na url http://localhost:8080/generate-api-key via Postman:
 ```
 {
     "time_window": 1,
@@ -35,7 +35,7 @@ Pegar a resposta da requisição e colocar na chave -key, no teste a seguir:
 docker compose run \                                                                               
   --rm \
   go-cli-test \
-  -url http://go-app:8080/hello-world-key \
+  -url http://go-app:8080/req-by-key \
   -method GET \
   -time 1 \
   -req 10 \
